@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>Mario Bootleg</title>
+	<meta charset="UTF-8">
+</head>
+<body>
+<br>
+<!-- Canvas: Green border with light blue background -->
+<canvas id="myCanvas" width="1280" height="720" style="border:2px solid #2ECC71; background-color: #33CCFF;"></canvas>
+
+<!-- Beginning of Javascript! -->
+<script type="text/javascript">
+
+// Super class of all sprites (Mario, Goombas, Tubes, and Fireballs)
+class Sprite
+{
+	constructor(x, y, width, height)
+	{
+		this.x = x;
+		this.y = y;
+		this.width = width;
+		this.height = height;
+
+		this.kill = false;
+	}
+
+	// Returns true if the two sprites colloide together
+	collidesWith(sprite)
+	{	// Checks for collision
+		if (!(this.x + this.width < sprite.x) && !(this.x > sprite.x + sprite.width)
+			&& !(this.y + this.height < sprite.y) && !(this.y > sprite.y + sprite.height))
+		{
+			return true;
+		}
+		else
+			return false;
+	}
+}
+
+// Stores and manipulates important information regarding the player character (Mario)
+class Mario extends Sprite
+{
+	constructor(x, y, model)
+	{
+		super(x, y, 60, 95);
+		this.model = model;	// Model instance
+		this.image = new Array();		// Array for normally oriented Mario images
+		this.image_flip = new Array();	// Array for reversed Mario images
+
+		this.frame = 0;			// Animation frame (decides which image to use)
+		this.numFrame = 5;		// Total number of frames in animation
+		this.moving = false;	// True when left or right key is pressed
+		this.flip = false;		// True when moving left
+		this.velY = 0;			// Vertical velocity (downward is positive)
+
+		this.jumping = false;	// True iff spacebar is pressed. Further logic determines if Mario actually jumps.
+		this.cooldownTime = 3;	// Max cooldown time
+		this.jumpCooldown = 0;	// Cooldown timer before Mario can jump again
+		this.jumpLimit = 8;	// Max time Mario can accelerate upwards
+
+		this.jumpSoundEffect = new Audio("bounce.mp3");
+		this.jumpSoundReady = true;
+
+		this.fireSoundEffect = new Audio("fwoosh.mp3");
+
+		this.prevX = this.x;	// Stores where Mario was the previous frame
+		this.prevY = this.y;	// ^^^
+
+		// Loads all 5 normal Mario images
+		for (let i = 1; i < 6; i++)
+		{	// Maybe this is overly complicated but I like it
+			let firstHalf = "mario";
+			let num = i.toString();
+			let extension = ".png";
+
+			// Combine the above 3 strings into the file name
+			let imgName = firstHalf.concat(num, extension);
+
+			// Loads each image source into array
+			this.image[i-1] = new Image();
+			this.image[i-1].src = imgName;
+		}
+		// Loads the 5 flipped Mario images
+		for (let i = 1; i < 6; i++)
+		{
+			let firstHalf = "mario";
+			let num = i.toString();
+			let extension = "_flip.png";
+
+			// Combine the above 3 strings into the file name
+			let imgName = firstHalf.concat(num, extension);
+
+			// Loads each image source into array
+			this.image_flip[i-1] = new Image();
+			this.image_flip[i-1].src = imgName;
+		}
+	}
+
+	update()
+	{
+		if (this.jumping && this.jumpCooldown === this.cooldownTime && this.jumpLimit > 0)
+		{	// Must: hold space, not be on cooldown, and have some jump juice (jumpLimit) left
+			this.velY = -15;
+			this.jumpLimit--;
+
+			if (this.jumpSoundReady)	// Plays a sound effect whenever Mario jumps
+			{
+				this.jumpSoundEffect.play();
+				this.jumpSoundReady = false;
+			}
+		}
+		else if (this.model.ground - this.y - this.height < this.velY)
+		{
+			this.y = this.model.ground - this.height;	// Keeps Mario from briefly clipping through ground
+			this.velY = 0;
+		}
+		else if (this.y + this.height < this.model.ground)	// If Mario is mid-air, accelerate downwards
+		{
+			this.velY += 1.4
+		}
+		else	// When Mario is on the ground
+		{
+			this.velY = 0;
+		}
+
+		this.y += this.velY;
+
+		if (! this.jumping && this.jumpLimit < 8 && this.jumpCooldown === this.cooldownTime)
+		{
+			this.jumpCooldown = 0;	// Starts jumpCooldown
+			this.jumpLimit = 8;		// Resets jumpLimit
+		}
+
+		// Checks for Mario-Tube collision
+		for (let i = 0; i < this.model.sprites.length; i++)
+		{
+			let sprite = this.model.sprites[i];
+			// Only concerned with tubes
+			if (sprite instanceof Tube && this.collidesWith(sprite))
+			{
+				this.fixCollision(sprite);
+			}
+		}
+
+		// Prevents Mario from jumping midair
+		if (this.jumpCooldown === this.cooldownTime && this.velY === 0)
+		{
+			this.jumpCooldown = 0;
+		}
+
+		// jumpCooldown timer
+		if (this.jumpCooldown < this.cooldownTime && this.velY === 0)
+				this.jumpCooldown++;
+
+		// Allows the jump sound effect to be played again
+		if (this.velY === 0)
+			this.jumpSoundReady = true;
+
+		// Stores values to be reference in collision rectification in next frame
+		this.prevX = this.x;
+		this.prevY = this.y;
+
+		// This animates Mario between 5 different images
+		if (this.moving)
+		{
+			this.frame++;
+			this.frame %= this.numFrame;
+		}
+	}
+
+	fixCollision(sprite)
+	{
+		if (this.prevY + this.height < sprite.y)	// Corrects vertical tube collisions
+		{
+			this.y = sprite.y - this.height - 1;	// Corrects vertical position
+			this.velY = 0;	// Sets vertical velocity to 0
+		}
+		else if (this.prevX > sprite.x + sprite.width)	// If Mario was to the right of the tube
+		{
+			let viewCorrect = this.x;
+
+			this.x = sprite.x + sprite.width + 1;	// Corrects the horizontal position
+
+			viewCorrect -= this.x;
+			this.model.view.scrollVal -= viewCorrect;	// Corrects View's scrollVal to draw Mario in the proper spot
+		}
+		else	// If Mario was to the left of the tube
+		{
+			let viewCorrect = this.x;
+
+			this.x = sprite.x - this.width - 1;		// Corrects the horizontal position
+
+			viewCorrect -= this.x;
+			this.model.view.scrollVal -= viewCorrect;	// Corrects View's scrollVal to draw Mario in the proper spot
+		}
+	}
+
+	fire()
+	{
+		this.model.sprites.push(new Fireball(this.x, this.y, this.model, this.flip));
+		this.fireSoundEffect.play();
+	}
+}
+
+// Stores important Goomba related matters
+class Goomba extends Sprite
+{
+	constructor(x, y, model)
+	{
+		super(x, y, 50, 60);
+
+		this.model = model;	// Reference to model so this can check for tube collisions
+		this.image = new Array();	// Will store the normal and burning goomba images
+		this.image_flip = new Array();	// ^^^ but the images are flipped
+
+		this.flip = false;	// Determines goomba's direction of motion and visual orientation
+		this.dying = false;	// True if goomba has been hit by a fireball
+		this.deathTimer = 8;
+		
+		// Images of the goomba lifecycle (normal orientation)
+		this.image[0] = new Image();
+		this.image[1] = new Image();
+		this.image[0].src = "goomba.png";
+		this.image[1].src = "goomba_fire.png";
+		// Images of the goomba lifecycle (flipped)
+		this.image_flip[0] = new Image();
+		this.image_flip[1] = new Image();
+		this.image_flip[0].src = "goomba_flip.png";
+		this.image_flip[1].src = "goomba_fire_flip.png";
+	}
+
+	update()
+	{
+		for (let i = 0; i < this.model.sprites.length; i++)
+		{	// Loops through all sprites and checks for tube collisions
+			let sprite = this.model.sprites[i];
+
+			if (sprite instanceof Tube)
+			{	// If goomba collides with tube, it turns around
+				if (this.collidesWith(sprite))
+				{
+					this.flip = ! this.flip;
+				}
+			}
+			else if (sprite instanceof Fireball)
+			{
+				if (this.collidesWith(sprite))
+				{
+					this.dying = true;
+				}
+			}
+		}
+
+		if (! this.flip)
+			this.x += 7;	// Moves right
+		else
+			this.x -= 7;	// Moves left
+
+		if (this.dying && this.deathTimer < 1)
+			this.kill = true;	// Marks goomba for death if timer has run out
+		else if (this.dying)
+			this.deathTimer--;	// Decrements timer if goomba is dying
+	}
+}
+
+// Fireball.
+class Fireball extends Sprite
+{
+	constructor(x, y, model, flip)
+	{
+		super(x, y, 51, 46);
+
+		this.model = model;
+		this.flip = flip;	// Determines direction of movement
+		this.velY = 0.0;
+		this.kill = false;
+
+		this.image = new Image();
+		this.image.src = "lettuce.png";
+	}
+
+	update()
+	{
+		// Horizontal motion
+		if (! this.flip)
+			this.x += 25;
+		else
+			this.x -= 25;
+
+		// Removes fireball from game once it has left the screen (and then some)
+		if (this.x > this.model.view.scrollVal + 1400)
+			this.kill = true;
+		else if (this.x < this.model.view.scrollVal - 500)
+			this.kill = true;
+
+		// Vertical motion
+		if (this.y + this.height < this.model.ground)
+		{
+			this.velY += 2.0;
+		}
+
+		this.y += this.velY;
+
+		if (this.y + this.height > this.model.ground)
+		{
+			this.y = this.model.ground - this.height;	// Prevents momentarily clipping through the ground
+			this.velY = -this.velY;		// Changes to positive velocity
+		}
+	}
+}
+
+// Stores info about tubes
+class Tube extends Sprite
+{
+	constructor(x, y)
+	{
+		super(x, y, 55, 400);
+
+		this.image = new Image();
+		this.image.src = "tube.png";
+	}
+
+	update()
+	{
+	}
+}
+
+// Interprets controls from Controller class and passes necessary info to View class. Handles game logic.
+class Model
+{
+	constructor()
+	{
+		this.view = null;	// Value set by setView() method
+		// Mario is born
+		this.mario = new Mario(250, 200, this);
+		this.sprites = [];	// Create array of sprites and add Mario to it
+		this.sprites.push(this.mario);
+		// Add tubes
+		this.sprites.push(new Tube(100, 375));
+		this.sprites.push(new Tube(500, 460));
+		this.sprites.push(new Tube(800, 320));
+		// Add a goomba
+		this.sprites.push(new Goomba(600, 465, this));
+		
+		this.ground = 525;
+	}
+
+	update()
+	{	// Updates all sprites
+		for (let i = 0; i < this.sprites.length; i++)
+		{
+			if (this.sprites[i].kill)
+			{
+				this.sprites.splice(i, 1);	// Removes sprite from game
+				i--;	// Because array element was removed, decrement iterator
+			}
+			else
+				this.sprites[i].update();	// Update sprites that are still alive
+		}
+	}
+
+	setView(view)
+	{
+		this.view = view;
+	}
+}
+
+// Responsible for drawing everything on the screen
+class View
+{
+	constructor(model)
+	{
+		this.model = model;	// Sets Model
+		this.model.setView(this);
+		this.canvas = document.getElementById("myCanvas");	// Stores where to draw
+
+		this.groundImg = new Image();
+		this.groundImg.src = "brickpattern.jpg";	// Picture of ground
+
+		this.scrollVal = 0;
+	}
+
+	update()
+	{
+		let ctx = this.canvas.getContext("2d");
+		ctx.clearRect(0, 0, 1280, 720);	// Clears the screen
+		ctx.drawImage(this.groundImg, 0, this.model.ground);	// Draws the ground
+		// I now see the brick pattern wasn't a great choice, but I worked too hard on it to change it...
+
+		// Iterates through sprites and draws them appropriately
+		for(let i = 0; i < this.model.sprites.length; i++)
+		{
+			let sprite = this.model.sprites[i];
+
+			if (sprite instanceof Mario)	// Mario is a special case
+			{
+				if (sprite.flip)
+				{	// Draws his reverse image when walking left
+					ctx.drawImage(sprite.image_flip[sprite.frame], sprite.x - this.scrollVal, sprite.y);
+				}
+				else
+				{	// Draws normally oriented image when walking right
+					ctx.drawImage(sprite.image[sprite.frame], sprite.x - this.scrollVal, sprite.y);
+				}
+			}
+			else if (sprite instanceof Goomba)
+			{
+				let state = sprite.dying ? 1 : 0;	// Determines whether to draw normal or burning goomba
+
+				if (sprite.flip)
+				{
+					ctx.drawImage(sprite.image_flip[state], sprite.x - this.scrollVal, sprite.y);
+				}
+				else
+				{
+					ctx.drawImage(sprite.image[state], sprite.x - this.scrollVal, sprite.y);
+				}
+			}
+			else
+			{	// Draws every other sprite
+				ctx.drawImage(sprite.image, sprite.x - this.scrollVal, sprite.y);
+			}
+		}
+	}
+}
+
+// Handles all key presses and translates that into game behavior with the help of the Model class
+class Controller
+{
+	constructor(model, view)
+	{
+		this.model = model;
+		this.view = view;
+		
+		this.keyRight = false;
+		this.keyLeft = false;
+		this.keySpace = false;
+		this.keyF = false;
+		this.fireReady = false;
+		
+		let self = this;
+		document.addEventListener('keydown', function(event) { self.keyPress(event); }, false);
+		document.addEventListener('keyup', function(event) { self.keyRelease(event); }, false);
+	}
+
+	keyPress(event)
+	{
+		if (event.keyCode == 37) this.keyLeft = true;	// Presses left arrow
+		if (event.keyCode == 39) this.keyRight = true;	// Presses right arrow
+		if (event.keyCode == 32) this.keySpace = true;	// Presses spacebar
+		if (event.keyCode == 70) this.keyF = true;		// Presses F key
+	}
+
+	keyRelease(event)
+	{
+		if (event.keyCode == 37) this.keyLeft = false;	// Releases left arrow
+		if (event.keyCode == 39) this.keyRight = false;	// Releases right arrow
+		if (event.keyCode == 32) this.keySpace = false;	// Releases spacebar
+		if (event.keyCode == 70) this.keyF = false;		// Releases F key
+	}
+
+	update()
+	{
+		if (this.keyRight && this.keyLeft)	// Mario doesn't move if both are pressed
+		{
+			this.model.mario.moving = false;
+		}
+		else if (this.keyRight)		// Moves right
+		{
+			this.model.mario.moving = true;
+			this.model.mario.flip = false;
+
+			this.model.mario.x += 10;
+			this.view.scrollVal += 10;
+		}
+		else if (this.keyLeft)		// Moves left
+		{
+			this.model.mario.moving = true;
+			this.model.mario.flip = true;
+
+			this.model.mario.x -= 10;
+			this.view.scrollVal -= 10;
+		}
+		else	// Stops animating
+		{
+			this.model.mario.moving = false;
+		}
+
+		// Controls Mario's jumps
+		if (this.keySpace)
+			this.model.mario.jumping = true;
+		else
+			this.model.mario.jumping = false;
+
+		// Shoots a fireball
+		if (! this.keyF && this.fireReady)
+		{
+			this.model.mario.fire();
+			this.fireReady = false;
+		}
+		else if (this.keyF)
+			this.fireReady = true;
+	}
+}
+
+// Creates and updates the Model, View, and Controller classes
+class Game
+{
+	constructor()
+	{
+		this.model = new Model();
+		this.view = new View(this.model);
+		this.controller = new Controller(this.model, this.view);
+	}
+
+	onTimer()
+	{
+		this.controller.update();
+		this.model.update();
+		this.view.update();
+	}
+}
+
+function playGame()
+{
+	// Removes the start button
+	let oldButton = document.getElementById("startbutton");
+	oldButton.remove();
+
+	// Plays professionally produced, level appropriate music
+	let music = new Audio('level_music.mp3');
+	music.play();
+
+	// Starts the game
+	let game = new Game();	// Creates a new game object
+	let timer = setInterval(function() { game.onTimer(); }, 40);	// Updates the game object every 40 ms
+}
+
+</script>
+<br>
+<button id="startbutton" onclick="playGame()">Start!</button>
+
+<h3>Controls</h3>
+<p>Left arrow - Move left</p>
+<p>Right arrow - Move right</p>
+<p>Space - Jump (hold to jump higher)</p>
+<p>F - Throw fireballs</p>
+
+</body>
+</html>
